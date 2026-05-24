@@ -1,0 +1,95 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install SDL3
+        run: |
+          brew update
+          brew install sdl3
+
+      - name: Compile
+        run: |
+          SDL3_PREFIX=$(brew --prefix sdl3)
+          gcc terrain.c -o terrain \
+            -I"$SDL3_PREFIX/include" \
+            -L"$SDL3_PREFIX/lib" \
+            -lSDL3 \
+            -lm
+
+      - name: Create app bundle
+        run: |
+          SDL3_PREFIX=$(brew --prefix sdl3)
+          SDL3_DYLIB="$SDL3_PREFIX/lib/libSDL3.dylib"
+
+          mkdir -p MyApp.app/Contents/MacOS
+          mkdir -p MyApp.app/Contents/Frameworks
+          mkdir -p MyApp.app/Contents/Resources
+
+          cp terrain MyApp.app/Contents/MacOS/terrain
+          cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
+
+          OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
+            | grep libSDL3 \
+            | awk 'NR==1{print $1}')
+
+          install_name_tool \
+            -change "$OLD_PATH" \
+            "@executable_path/../Frameworks/libSDL3.dylib" \
+            MyApp.app/Contents/MacOS/terrain
+
+      - name: Create Info.plist
+        run: |
+          cat > MyApp.app/Contents/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>TerrainGenerator</string>
+              <key>CFBundleExecutable</key>
+              <string>terrain</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.yourname.terrain</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Verify bundle
+        run: |
+          echo "--- Binary dependencies ---"
+          otool -L MyApp.app/Contents/MacOS/terrain
+          echo "--- Bundle structure ---"
+          find MyApp.app -type f
+
+      - name: Zip bundle
+        run: |
+          zip -r --symlinks MyApp-macOS.zip MyApp.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyApp-macOS
+          path: MyApp-macOS.zip
+          retention-days: 30
