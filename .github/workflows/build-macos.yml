@@ -12,8 +12,8 @@ jobs:
     runs-on: macos-latest
 
     env:
-      APP_NAME: MyApp          # <-- Change this to your app's name
-      SOURCE_FILE: main.c      # <-- Change this to your .c file name (or list more below)
+      APP_NAME: ver-macOS          # <-- Change this to your app's name
+      SOURCE_FILE: terrain.c      # <-- Change this to your .c file name (or list more below)
 
     steps:
       - name: Checkout repository
