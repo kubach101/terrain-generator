@@ -27,26 +27,33 @@ jobs:
             -lSDL3 \
             -lm
 
-      - name: Create app bundle
-        run: |
-          SDL3_PREFIX=$(brew --prefix sdl3)
-          SDL3_DYLIB="$SDL3_PREFIX/lib/libSDL3.dylib"
+- name: Create app bundle
+  run: |
+    set -e
+    SDL3_PREFIX=$(brew --prefix sdl3)
+    SDL3_DYLIB="$SDL3_PREFIX/lib/libSDL3.dylib"
 
-          mkdir -p MyApp.app/Contents/MacOS
-          mkdir -p MyApp.app/Contents/Frameworks
-          mkdir -p MyApp.app/Contents/Resources
+    mkdir -p MyApp.app/Contents/MacOS
+    mkdir -p MyApp.app/Contents/Frameworks
+    mkdir -p MyApp.app/Contents/Resources
 
-          cp terrain MyApp.app/Contents/MacOS/terrain
-          cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
+    cp terrain MyApp.app/Contents/MacOS/terrain
+    cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
 
-          OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
-            | grep libSDL3 \
-            | awk 'NR==1{print $1}')
+    OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
+      | grep libSDL3 \
+      | awk 'NR==1{print $1}')
 
-          install_name_tool \
-            -change "$OLD_PATH" \
-            "@executable_path/../Frameworks/libSDL3.dylib" \
-            MyApp.app/Contents/MacOS/terrain
+    # Guard against empty path
+    if [ -z "$OLD_PATH" ]; then
+      echo "ERROR: could not resolve SDL3 dylib path"
+      exit 1
+    fi
+
+    install_name_tool \
+      -change "$OLD_PATH" \
+      "@executable_path/../Frameworks/libSDL3.dylib" \
+      MyApp.app/Contents/MacOS/terrain
 
       - name: Create Info.plist
         run: |
