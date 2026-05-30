@@ -9,88 +9,113 @@ jobs:
   build:
     runs-on: macos-latest
 
+    env:
+      APP_NAME: MyApp
+      BINARY_NAME: terrain
+      BUNDLE_ID: com.yourname.terrain
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install SDL3
         run: |
-          brew update
+          set -e
           brew install sdl3
 
       - name: Compile
         run: |
+          set -e
           SDL3_PREFIX=$(brew --prefix sdl3)
-          gcc terrain.c -o terrain \
+          clang terrain.c -o terrain \
             -I"$SDL3_PREFIX/include" \
             -L"$SDL3_PREFIX/lib" \
             -lSDL3 \
             -lm
-- name: Create app bundle
-  run: |
-    set -e
-    SDL3_PREFIX=$(brew --prefix sdl3)
-    SDL3_DYLIB="$SDL3_PREFIX/lib/libSDL3.dylib"
 
-    mkdir -p MyApp.app/Contents/MacOS
-    mkdir -p MyApp.app/Contents/Frameworks
-    mkdir -p MyApp.app/Contents/Resources
+      - name: Create app bundle
+        run: |
+          set -e
+          SDL3_PREFIX=$(brew --prefix sdl3)
 
-    cp terrain MyApp.app/Contents/MacOS/terrain
-    cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
+          # Find the actual dylib — may be versioned (libSDL3.0.dylib)
+          SDL3_DYLIB=$(find "$SDL3_PREFIX/lib" -name "libSDL3*.dylib" ! -name "*.0.*.dylib" | head -1)
+          if [ -z "$SDL3_DYLIB" ]; then
+            SDL3_DYLIB=$(find "$SDL3_PREFIX/lib" -name "libSDL3*.dylib" | head -1)
+          fi
+          echo "Using SDL3 dylib: $SDL3_DYLIB"
 
-    OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
-      | grep libSDL3 \
-      | awk 'NR==1{print $1}')
+          mkdir -p MyApp.app/Contents/MacOS
+          mkdir -p MyApp.app/Contents/Frameworks
+          mkdir -p MyApp.app/Contents/Resources
 
-    # Guard against empty path
-    if [ -z "$OLD_PATH" ]; then
-      echo "ERROR: could not resolve SDL3 dylib path"
-      exit 1
-    fi
+          cp terrain MyApp.app/Contents/MacOS/terrain
+          cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
 
-    install_name_tool \
-      -change "$OLD_PATH" \
-      "@executable_path/../Frameworks/libSDL3.dylib" \
-      MyApp.app/Contents/MacOS/terrain
+          # Strip ad-hoc signature so install_name_tool can modify the binary
+          codesign --remove-signature MyApp.app/Contents/MacOS/terrain || true
+
+          # Resolve the recorded dylib path in the binary
+          OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
+            | grep -i libSDL3 \
+            | awk 'NR==1{print $1}')
+
+          if [ -z "$OLD_PATH" ]; then
+            echo "ERROR: could not find SDL3 reference in binary. otool output:"
+            otool -L MyApp.app/Contents/MacOS/terrain
+            exit 1
+          fi
+
+          echo "Rewriting: $OLD_PATH"
+          install_name_tool \
+            -change "$OLD_PATH" \
+            "@executable_path/../Frameworks/libSDL3.dylib" \
+            MyApp.app/Contents/MacOS/terrain
 
       - name: Create Info.plist
         run: |
+          set -e
           cat > MyApp.app/Contents/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key>
-              <string>TerrainGenerator</string>
-              <key>CFBundleExecutable</key>
-              <string>terrain</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.yourname.terrain</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>11.0</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>TerrainGenerator</string>
+    <key>CFBundleExecutable</key>
+    <string>terrain</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.yourname.terrain</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>
+EOF
 
       - name: Verify bundle
         run: |
+          set -e
           echo "--- Binary dependencies ---"
           otool -L MyApp.app/Contents/MacOS/terrain
           echo "--- Bundle structure ---"
           find MyApp.app -type f
+          echo "--- Plist validation ---"
+          plutil -lint MyApp.app/Contents/Info.plist
 
       - name: Zip bundle
         run: |
+          set -e
           zip -r --symlinks MyApp-macOS.zip MyApp.app
 
       - name: Upload artifact
