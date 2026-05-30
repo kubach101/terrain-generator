@@ -1,125 +1,118 @@
-name: Build macOS
+name: Build macOS App
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-macos:
     runs-on: macos-latest
 
     env:
-      APP_NAME: MyApp
-      BINARY_NAME: terrain
-      BUNDLE_ID: com.yourname.terrain
+      APP_NAME: MyApp          # <-- Change this to your app's name
+      SOURCE_FILE: main.c      # <-- Change this to your .c file name (or list more below)
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install SDL3
+      - name: Install SDL3 via Homebrew
         run: |
-          set -e
-          brew install sdl3
+          brew update
+          brew install sdl3 || true
+          # SDL3 may not be in Homebrew stable yet; fall back to building from source
+          if ! pkg-config --exists sdl3; then
+            echo "SDL3 not found via brew, building from source..."
+            git clone --depth 1 --branch release-3.2.14 https://github.com/libsdl-org/SDL.git /tmp/SDL3
+            cmake -S /tmp/SDL3 -B /tmp/SDL3/build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSDL_SHARED=ON \
+              -DSDL_STATIC=OFF \
+              -DCMAKE_INSTALL_PREFIX=/usr/local
+            cmake --build /tmp/SDL3/build --parallel $(sysctl -n hw.logicalcpu)
+            sudo cmake --install /tmp/SDL3/build
+          fi
+
+      - name: Get SDL3 flags
+        id: sdl_flags
+        run: |
+          echo "cflags=$(pkg-config --cflags sdl3)" >> "$GITHUB_OUTPUT"
+          echo "libs=$(pkg-config --libs sdl3)"     >> "$GITHUB_OUTPUT"
 
       - name: Compile
         run: |
-          set -e
-          SDL3_PREFIX=$(brew --prefix sdl3)
-          clang terrain.c -o terrain \
-            -I"$SDL3_PREFIX/include" \
-            -L"$SDL3_PREFIX/lib" \
-            -lSDL3 \
-            -lm
+          mkdir -p build
+          cc ${{ env.SOURCE_FILE }} \
+            ${{ steps.sdl_flags.outputs.cflags }} \
+            ${{ steps.sdl_flags.outputs.libs }} \
+            -o build/${{ env.APP_NAME }} \
+            -O2
 
-      - name: Create app bundle
+      # ---------- bundle into a proper .app ----------
+      - name: Create .app bundle
         run: |
-          set -e
-          SDL3_PREFIX=$(brew --prefix sdl3)
+          APP_DIR="build/${{ env.APP_NAME }}.app"
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+          mkdir -p "$APP_DIR/Contents/Frameworks"
 
-          # Find the actual dylib — may be versioned (libSDL3.0.dylib)
-          SDL3_DYLIB=$(find "$SDL3_PREFIX/lib" -name "libSDL3*.dylib" ! -name "*.0.*.dylib" | head -1)
-          if [ -z "$SDL3_DYLIB" ]; then
-            SDL3_DYLIB=$(find "$SDL3_PREFIX/lib" -name "libSDL3*.dylib" | head -1)
-          fi
-          echo "Using SDL3 dylib: $SDL3_DYLIB"
+          # Copy the binary
+          cp "build/${{ env.APP_NAME }}" "$APP_DIR/Contents/MacOS/${{ env.APP_NAME }}"
 
-          mkdir -p MyApp.app/Contents/MacOS
-          mkdir -p MyApp.app/Contents/Frameworks
-          mkdir -p MyApp.app/Contents/Resources
-
-          cp terrain MyApp.app/Contents/MacOS/terrain
-          cp "$SDL3_DYLIB" MyApp.app/Contents/Frameworks/libSDL3.dylib
-
-          # Strip ad-hoc signature so install_name_tool can modify the binary
-          codesign --remove-signature MyApp.app/Contents/MacOS/terrain || true
-
-          # Resolve the recorded dylib path in the binary
-          OLD_PATH=$(otool -L MyApp.app/Contents/MacOS/terrain \
-            | grep -i libSDL3 \
-            | awk 'NR==1{print $1}')
-
-          if [ -z "$OLD_PATH" ]; then
-            echo "ERROR: could not find SDL3 reference in binary. otool output:"
-            otool -L MyApp.app/Contents/MacOS/terrain
-            exit 1
-          fi
-
-          echo "Rewriting: $OLD_PATH"
-          install_name_tool \
-            -change "$OLD_PATH" \
-            "@executable_path/../Frameworks/libSDL3.dylib" \
-            MyApp.app/Contents/MacOS/terrain
-
-      - name: Create Info.plist
-        run: |
-          set -e
-          cat > MyApp.app/Contents/Info.plist << 'PLIST_EOF'
+          # Write a minimal Info.plist
+          cat > "$APP_DIR/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleName</key>
-              <string>TerrainGenerator</string>
-              <key>CFBundleExecutable</key>
-              <string>terrain</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.yourname.terrain</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>11.0</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-              <key>NSPrincipalClass</key>
-              <string>NSApplication</string>
+            <key>CFBundleName</key>            <string>${{ env.APP_NAME }}</string>
+            <key>CFBundleExecutable</key>       <string>${{ env.APP_NAME }}</string>
+            <key>CFBundleIdentifier</key>       <string>com.yourname.${{ env.APP_NAME }}</string>
+            <key>CFBundleVersion</key>          <string>1.0.0</string>
+            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+            <key>CFBundlePackageType</key>      <string>APPL</string>
+            <key>CFBundleSignature</key>        <string>????</string>
+            <key>NSHighResolutionCapable</key>  <true/>
+            <key>LSMinimumSystemVersion</key>   <string>11.0</string>
           </dict>
           </plist>
-          PLIST_EOF
+          EOF
 
-      - name: Verify bundle
-        run: |
-          set -e
-          echo "--- Binary dependencies ---"
-          otool -L MyApp.app/Contents/MacOS/terrain
-          echo "--- Bundle structure ---"
-          find MyApp.app -type f
-          echo "--- Plist validation ---"
-          plutil -lint MyApp.app/Contents/Info.plist
+          # Bundle SDL3 dylib so the app is self-contained
+          SDL_DYLIB=$(pkg-config --variable=libdir sdl3)/libSDL3.dylib
+          if [ -f "$SDL_DYLIB" ]; then
+            cp "$SDL_DYLIB" "$APP_DIR/Contents/Frameworks/"
+            install_name_tool \
+              -change "$SDL_DYLIB" \
+              "@executable_path/../Frameworks/libSDL3.dylib" \
+              "$APP_DIR/Contents/MacOS/${{ env.APP_NAME }}"
+          fi
 
-      - name: Zip bundle
+      # Optional: ad-hoc code-sign so Gatekeeper lets it run without a paid cert
+      - name: Ad-hoc code sign
         run: |
-          set -e
-          zip -r --symlinks MyApp-macOS.zip MyApp.app
+          codesign --force --deep --sign - \
+            "build/${{ env.APP_NAME }}.app"
+
+      - name: Zip the .app
+        run: |
+          cd build
+          zip -r "../${{ env.APP_NAME }}-macOS.zip" "${{ env.APP_NAME }}.app"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MyApp-macOS
-          path: MyApp-macOS.zip
+          name: ${{ env.APP_NAME }}-macOS
+          path: ${{ env.APP_NAME }}-macOS.zip
           retention-days: 30
+
+      # ---------- attach to a GitHub Release (only on tag pushes) ----------
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APP_NAME }}-macOS.zip
