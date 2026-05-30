@@ -26,7 +26,6 @@ jobs:
             -L"$SDL3_PREFIX/lib" \
             -lSDL3 \
             -lm
-
 - name: Create app bundle
   run: |
     set -e
