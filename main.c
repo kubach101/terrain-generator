@@ -1,4 +1,5 @@
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <stdlib.h>
 #define _USE_MATH_DEFINES
 #include <math.h>
