@@ -1,4 +1,4 @@
-To run my app you'll need a file called "SDL3.dll", i located it in "bin" folder with my app.
+To run my app you'll need a file called "SDL3.dll", i located it in "bin" folder with my app(terrain.exe).
 
 CONTROLS:
 ARROWS - move camera around
